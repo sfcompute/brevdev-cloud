@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	maxPricePerGPUPerHour = 2
+	maxPricePerGPUPerHour = 1.75
 	defaultPort           = 2222
 	defaultSSHUsername    = "ubuntu"
 	vmStatusRunning       = "running"
