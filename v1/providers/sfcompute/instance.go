@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	maxPricePerNodeHour = 1600
-	defaultPort         = 2222
-	defaultSSHUsername  = "ubuntu"
-	vmStatusRunning     = "running"
+	maxPricePerGPUPerHour = 2
+	defaultPort           = 2222
+	defaultSSHUsername    = "ubuntu"
+	vmStatusRunning       = "running"
 )
 
 func (c *SFCClient) CreateInstance(ctx context.Context, attrs v1.CreateInstanceAttrs) (*v1.Instance, error) {
@@ -38,7 +38,7 @@ func (c *SFCClient) CreateInstance(ctx context.Context, attrs v1.CreateInstanceA
 	resp, err := c.client.Nodes.New(ctx, sfcnodes.NodeNewParams{
 		CreateNodesRequest: sfcnodes.CreateNodesRequestParam{
 			DesiredCount:        1,
-			MaxPricePerNodeHour: maxPricePerNodeHour,
+			MaxPricePerNodeHour: maxPricePerGPUPerHour * 8,
 			Zone:                zone.Name,
 			Names:               []string{name},
 			CloudInitUserData:   param.Opt[string]{Value: sshKeyCloudInit(attrs.PublicKey)},
