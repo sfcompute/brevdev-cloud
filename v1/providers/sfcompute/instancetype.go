@@ -8,7 +8,6 @@ import (
 
 	"github.com/alecthomas/units"
 	"github.com/bojanz/currency"
-	sfcnodes "github.com/sfcompute/nodes-go"
 
 	v1 "github.com/brevdev/cloud/v1"
 )
@@ -42,9 +41,7 @@ func (c *SFCClient) GetInstanceTypes(ctx context.Context, args v1.GetInstanceTyp
 		v1.LogField("args", fmt.Sprintf("%+v", args)),
 	)
 
-	// Fetch all available zones
-	includeUnavailable := false
-	zones, err := c.getZones(ctx, includeUnavailable)
+	zones, err := c.getZones(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -86,8 +83,8 @@ func (c *SFCClient) GetInstanceTypes(ctx context.Context, args v1.GetInstanceTyp
 	return instanceTypes, nil
 }
 
-func getInstanceTypeForZone(zone sfcnodes.ZoneListResponseData) (*v1.InstanceType, error) {
-	gpuType := strings.ToLower(string(zone.HardwareType))
+func getInstanceTypeForZone(zone sfcZone) (*v1.InstanceType, error) {
+	gpuType := strings.ToLower(zone.HardwareType)
 
 	gpuMetadata, err := getInstanceTypeMetadata(gpuType)
 	if err != nil {
@@ -123,6 +120,7 @@ func getInstanceTypeForZone(zone sfcnodes.ZoneListResponseData) (*v1.InstanceTyp
 		Rebootable:          false,
 		IsContainer:         false,
 		Provider:            CloudProviderID,
+		Cloud:               CloudProviderID,
 		BasePrice:           &gpuMetadata.price,
 		EstimatedDeployTime: &gpuMetadata.estimatedDeployTime,
 		SupportedGPUs: []v1.GPU{{
@@ -152,12 +150,12 @@ func gpuTypeIsAllowed(gpuType string) bool {
 	return gpuType == gpuTypeH100 || gpuType == gpuTypeH200
 }
 
-func makeInstanceTypeName(zone sfcnodes.ZoneListResponseData) string {
+func makeInstanceTypeName(zone sfcZone) string {
 	interconnect := ""
 	if strings.ToLower(zone.InterconnectType) == interconnectInfiniband {
 		interconnect = ".ib"
 	}
-	return fmt.Sprintf("%s%s", strings.ToLower(string(zone.HardwareType)), interconnect)
+	return fmt.Sprintf("%s%s", strings.ToLower(zone.HardwareType), interconnect)
 }
 
 func (c *SFCClient) GetLocations(ctx context.Context, args v1.GetLocationsArgs) ([]v1.Location, error) {
@@ -175,42 +173,9 @@ func (c *SFCClient) GetLocations(ctx context.Context, args v1.GetLocationsArgs) 
 	return locations, nil
 }
 
-func (c *SFCClient) getZones(ctx context.Context, includeUnavailable bool) ([]sfcnodes.ZoneListResponseData, error) {
-	// Fetch the zones from the API
-	resp, err := c.client.Zones.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	// If there are no zones, return an empty list
-	if resp == nil || len(resp.Data) == 0 {
-		return []sfcnodes.ZoneListResponseData{}, nil
-	}
-
-	zones := make([]sfcnodes.ZoneListResponseData, 0, len(resp.Data))
-	for _, zone := range resp.Data {
-		// If there is no current available capacity, skip it.
-		// AvailableCapacity contains time-windowed rectangles; we must check
-		// that at least one rectangle covers the current time with quantity > 0.
-		if !hasCurrentCapacity(zone.AvailableCapacity) && !includeUnavailable {
-			continue
-		}
-
-		// If the delivery type is not VM, skip it
-		if zone.DeliveryType != deliveryTypeVM {
-			continue
-		}
-
-		// Add the zone to the list
-		zones = append(zones, zone)
-	}
-
-	return zones, nil
-}
-
 // hasCurrentCapacity returns true if any availability rectangle covers the
 // current time and has quantity > 0.
-func hasCurrentCapacity(capacity []sfcnodes.ZoneListResponseDataAvailableCapacity) bool {
+func hasCurrentCapacity(capacity []sfcZoneAvailability) bool {
 	now := time.Now().Unix()
 	for _, c := range capacity {
 		if c.StartTimestamp <= now && now < c.EndTimestamp && c.Quantity > 0 {
@@ -220,12 +185,96 @@ func hasCurrentCapacity(capacity []sfcnodes.ZoneListResponseDataAvailableCapacit
 	return false
 }
 
-func zoneToLocation(zone sfcnodes.ZoneListResponseData) v1.Location {
+func zoneToLocation(zone sfcZone) v1.Location {
 	return v1.Location{
 		Name:        zone.Name,
-		Description: fmt.Sprintf("sfc_%s_%s", zone.Name, string(zone.HardwareType)),
+		Description: fmt.Sprintf("sfc_%s_%s", zone.Name, zone.HardwareType),
 		Available:   true,
 	}
+}
+
+func (c *SFCClient) getZone(ctx context.Context, location string, includeUnavailable bool) (*sfcZone, error) {
+	zones, err := c.getZones(ctx, includeUnavailable)
+	if err != nil {
+		return nil, err
+	}
+	if len(zones) == 0 {
+		return nil, fmt.Errorf("no zones available")
+	}
+
+	for _, zone := range zones {
+		if zone.Name == location {
+			matched := zone
+			return &matched, nil
+		}
+	}
+
+	return nil, fmt.Errorf("zone not found in location %s", location)
+}
+
+func getInstanceTypeForLocationAndType(location string, instanceTypeName string) (*v1.InstanceType, error) {
+	gpuType := strings.ToLower(instanceTypeName)
+	if idx := strings.Index(gpuType, "."); idx > 0 {
+		gpuType = gpuType[:idx]
+	}
+
+	gpuMetadata, err := getInstanceTypeMetadata(gpuType)
+	if err != nil {
+		return nil, err
+	}
+
+	ramInt64, err := gpuMetadata.memoryBytes.ByteCountInUnitInt64(v1.Gibibyte)
+	if err != nil {
+		return nil, err
+	}
+	ram := units.Base2Bytes(ramInt64 * int64(units.Gibibyte))
+
+	memoryInt64, err := gpuMetadata.gpuVRAM.ByteCountInUnitInt64(v1.Gibibyte)
+	if err != nil {
+		return nil, err
+	}
+	memory := units.Base2Bytes(memoryInt64 * int64(units.Gibibyte))
+
+	diskSizeInt64, err := gpuMetadata.diskBytes.ByteCountInUnitInt64(v1.Gibibyte)
+	if err != nil {
+		return nil, err
+	}
+	diskSize := units.Base2Bytes(diskSizeInt64 * int64(units.Gibibyte))
+
+	instanceType := v1.InstanceType{
+		IsAvailable:         true,
+		Type:                instanceTypeName,
+		Memory:              ram,
+		MemoryBytes:         gpuMetadata.memoryBytes,
+		VCPU:                gpuMetadata.vcpu,
+		Location:            location,
+		Stoppable:           false,
+		Rebootable:          false,
+		IsContainer:         false,
+		Provider:            CloudProviderID,
+		Cloud:               CloudProviderID,
+		BasePrice:           &gpuMetadata.price,
+		EstimatedDeployTime: &gpuMetadata.estimatedDeployTime,
+		SupportedGPUs: []v1.GPU{{
+			Count:          gpuMetadata.gpuCount,
+			Type:           strings.ToUpper(gpuType),
+			Manufacturer:   gpuMetadata.gpuManufacturer,
+			Name:           strings.ToUpper(gpuType),
+			Memory:         memory,
+			MemoryBytes:    gpuMetadata.gpuVRAM,
+			NetworkDetails: gpuMetadata.formFactor,
+		}},
+		SupportedStorage: []v1.Storage{{
+			Type:      diskTypeSSD,
+			Count:     1,
+			Size:      diskSize,
+			SizeBytes: gpuMetadata.diskBytes,
+		}},
+		SupportedArchitectures: []v1.Architecture{gpuMetadata.architecture},
+	}
+
+	instanceType.ID = v1.MakeGenericInstanceTypeID(instanceType)
+	return &instanceType, nil
 }
 
 // sfcInstanceTypeMetadata is a struct that contains the metadata for a given instance type.

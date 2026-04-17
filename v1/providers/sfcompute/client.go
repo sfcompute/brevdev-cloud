@@ -2,11 +2,12 @@ package v1
 
 import (
 	"context"
+	"net/http"
+	"sync"
+	"time"
 
 	v1 "github.com/brevdev/cloud/v1"
-	"github.com/sfcompute/nodes-go/option"
-
-	sfcnodes "github.com/sfcompute/nodes-go"
+	sfc "github.com/sfcompute/sfc-go"
 )
 
 const CloudProviderID = "sfcompute"
@@ -47,8 +48,13 @@ type SFCClient struct {
 	refID    string
 	location string
 	apiKey   string
-	client   sfcnodes.Client
+	client   *sfc.Sfc
+	baseURL  string
+	httpClient *http.Client
 	logger   v1.Logger
+
+	workspaceMu      sync.Mutex
+	defaultWorkspace string
 }
 
 var _ v1.CloudClient = &SFCClient{}
@@ -62,12 +68,15 @@ func WithLogger(logger v1.Logger) SFCClientOption {
 }
 
 func (c *SFCCredential) MakeClientWithOptions(_ context.Context, location string, opts ...SFCClientOption) (v1.CloudClient, error) {
+	httpClient := &http.Client{Timeout: 60 * time.Second}
 	sfcClient := &SFCClient{
-		refID:    c.RefID,
-		apiKey:   c.APIKey,
-		client:   sfcnodes.NewClient(option.WithBearerToken(c.APIKey)),
-		location: location,
-		logger:   &v1.NoopLogger{},
+		refID:      c.RefID,
+		apiKey:     c.APIKey,
+		client:     sfc.New(sfc.WithSecurity(c.APIKey), sfc.WithClient(httpClient), sfc.WithTimeout(60*time.Second)),
+		baseURL:    "https://api.sfcompute.com",
+		httpClient: httpClient,
+		location:   location,
+		logger:     &v1.NoopLogger{},
 	}
 
 	for _, opt := range opts {
