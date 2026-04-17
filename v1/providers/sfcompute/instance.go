@@ -78,17 +78,7 @@ func (c *SFCClient) CreateInstance(ctx context.Context, attrs v1.CreateInstanceA
 	capacityName := makeManagedPoolName("brev-cap", c.refID, stage, location)
 	procurementName := makeManagedPoolName("brev-proc", c.refID, stage, location)
 
-	var createdCapacityID string
-	var createdProcurementID string
-	var createdNodeID string
-	cleanup := true
-	defer func() {
-		if cleanup {
-			c.cleanupFailedInstanceCreate(ctx, createdNodeID, createdProcurementID, createdCapacityID)
-		}
-	}()
-
-	capacityID, procurementID, createdCapacity, createdProcurement, err := c.ensureManagedCapacityAndProcurement(
+	capacityID, _, _, _, err := c.ensureManagedCapacityAndProcurement(
 		ctx,
 		workspace,
 		zone.Name,
@@ -101,12 +91,6 @@ func (c *SFCClient) CreateInstance(ctx context.Context, attrs v1.CreateInstanceA
 	)
 	if err != nil {
 		return nil, errors.WrapAndTrace(err)
-	}
-	if createdCapacity {
-		createdCapacityID = capacityID
-	}
-	if createdProcurement {
-		createdProcurementID = procurementID
 	}
 
 	nodeReq := components.CreateNodeRequest{
@@ -127,14 +111,12 @@ func (c *SFCClient) CreateInstance(ctx context.Context, attrs v1.CreateInstanceA
 	if node == nil {
 		return nil, errors.WrapAndTrace(fmt.Errorf("node response missing node"))
 	}
-	createdNodeID = node.ID
 
 	instance, err := c.GetInstance(ctx, v1.CloudProviderInstanceID(node.ID))
 	if err != nil {
 		return nil, errors.WrapAndTrace(err)
 	}
 
-	cleanup = false
 	return instance, nil
 }
 
@@ -554,24 +536,6 @@ func (c *SFCClient) findManagedInstanceByRefID(ctx context.Context, refID string
 	}
 
 	return nil, nil
-}
-
-func (c *SFCClient) cleanupFailedInstanceCreate(ctx context.Context, nodeID string, procurementID string, capacityID string) {
-	if nodeID != "" {
-		if _, err := c.client.Nodes.TerminateNode(ctx, nodeID); err != nil {
-			c.logger.Error(ctx, err, v1.LogField("msg", "sfc: failed to clean up node after create failure"), v1.LogField("nodeID", nodeID))
-		}
-	}
-	if procurementID != "" {
-		if _, err := c.client.Procurements.Delete(ctx, procurementID); err != nil {
-			c.logger.Error(ctx, err, v1.LogField("msg", "sfc: failed to clean up procurement after create failure"), v1.LogField("procurementID", procurementID))
-		}
-	}
-	if capacityID != "" {
-		if _, err := c.client.Capacities.Delete(ctx, capacityID); err != nil {
-			c.logger.Error(ctx, err, v1.LogField("msg", "sfc: failed to clean up capacity after create failure"), v1.LogField("capacityID", capacityID))
-		}
-	}
 }
 
 func makeManagedNodeTags(cloudCredRefID string, stage string, attrs v1.CreateInstanceAttrs, location string, instanceType string) map[string]string {
