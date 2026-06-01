@@ -17,7 +17,7 @@ const (
 )
 
 func (c *SFCClientV2) GetDefaultCapacityResourcePath() string {
-	return fmt.Sprintf("sfc:capacity:%s:%s:brev-default-capacity", c.organization, c.workspace)
+	return fmt.Sprintf("sfc:capacity:%s:%s:brev-prod", c.organization, c.workspace)
 }
 
 func (c *SFCClientV2) GetWorkspaceResourcePath() string {
