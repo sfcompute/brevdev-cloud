@@ -31,6 +31,7 @@ func (c *SFCClientV2) CreateInstance(ctx context.Context, attrs v1.CreateInstanc
 	resp, err := c.client.Instances.Create(ctx, components.CreateInstanceRequest{
 		Capacity:          c.GetDefaultCapacityResourcePath(),
 		Image:             c.GetDefaultImageResourcePath(),
+		InstanceSku:       c.GetDefaultInstanceSku(),
 		CloudInitUserData: &cloudInit,
 		Tags:              optionalnullable.From(&tags),
 		Name:              optionalnullable.From(&attrs.Name),
