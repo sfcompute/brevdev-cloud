@@ -151,7 +151,7 @@ func (c *SFCClientV2) availableSlots(ctx context.Context) (int, error) {
 // BrevProductionCapacityID whose [StartAt, EndAt) range is currently in effect. EndAt is null
 // only on the final, unbounded entry.
 func (c *SFCClientV2) currentCapacityAllocation(ctx context.Context) (int, error) {
-	resp, err := c.client.Capacities.Fetch(ctx, c.GetDefaultCapacityResourcePath(), nil, nil)
+	resp, err := c.client.Capacities.Fetch(ctx, c.GetDefaultCapacityResourcePath(), nil)
 	if err != nil {
 		return 0, errors.WrapAndTrace(err)
 	}

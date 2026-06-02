@@ -65,7 +65,7 @@ func (c *SFCClientV2) GetInstance(ctx context.Context, id v1.CloudProviderInstan
 		v1.LogField("instanceID", id),
 	)
 
-	resp, err := c.client.Instances.Fetch(ctx, string(id), nil)
+	resp, err := c.client.Instances.Fetch(ctx, string(id))
 	if err != nil {
 		return nil, errors.WrapAndTrace(err)
 	}
